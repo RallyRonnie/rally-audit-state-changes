@@ -1,19 +1,23 @@
 Ext.define("TSAuditReport", {
-    extend: 'Rally.app.App',
+    extend: 'Rally.app.TimeboxScopedApp',
     componentCls: 'app',
-    logger: new Rally.technicalservices.Logger(),
-    defaults: { margin: 10 },
-    items: [
-        {xtype:'container',itemId:'display_box'},
-        {xtype:'tsinfolink'}
-    ],
-    launch: function() {
+    scopeType: 'iteration',
+    comboboxConfig: {
+        fieldLabel: 'Select an Iteration:',
+        labelWidth: 100,
+        width: 300
+    },
+    onScopeChange: function() {
+			this._MakeGrid();
+	},
+    _MakeGrid: function() {
         var me = this;
-        this.setLoading("Loading stuff...");
+        this.setLoading("Loading Data...");
         
         this._getHistory('HierarchicalRequirement').then({
             scope: this,
             success: function(records) {
+                if (records.length > 0) {
                 this._assignUsersToRecords(records).then({
                     scope: this,
                     success:function(records) {
@@ -24,7 +28,11 @@ Ext.define("TSAuditReport", {
                         alert(error_message);
                     }
                 });
-                
+            } else {
+                this.setLoading(false);
+                alert("No Records Found");
+                return;
+        }
                 
             },
             failure: function(error_message){
@@ -46,23 +54,16 @@ Ext.define("TSAuditReport", {
             users_to_check = Ext.Array.merge(users_to_check,[user]);
             
         });
-        
         var user_filter = Ext.Array.map(users_to_check, function(u) {
             return { property:'ObjectID', value: u };
         });
-        
-        this.logger.log('Users to Check: ', users_to_check);
-        this.logger.log('Filter: ', user_filter);
-        
         Ext.create('Rally.data.wsapi.Store',{
             model: 'User',
             filters:Rally.data.wsapi.Filter.or(user_filter),
-            fetch: ['_refObjectName','UserName']
+            fetch: ['_refObjectName','UserName','Role']
         }).load({
             callback : function(users, operation, successful) {
                 if (successful){
-                    me.logger.log(users);
-                    
                     var user_hash = {};
                     Ext.Array.each(users, function(user) {
                         user_hash[user.get('ObjectID')] = user;
@@ -74,43 +75,40 @@ Ext.define("TSAuditReport", {
                     
                     deferred.resolve(records);
                 } else {
-                    me.logger.log("Failed: ", operation);
                     deferred.reject('Problem loading: ' + operation.error.errors.join('. '));
                 }
             }
         });        
-        
         return deferred.promise;
     },
     _createStore: function(records) {
-        this.logger.log(records);
         var store = Ext.create('Rally.data.custom.Store',{
             data: records
         });
-        
         return store;
     },
     _getHistory: function(model_name){
+        var iOID = null;
         var deferred = Ext.create('Deft.Deferred');
         var me = this;
-          
+        if (this.getContext().getTimeboxScope().getRecord() != null) {
+        iOID = me.getContext().getTimeboxScope().getRecord().get("ObjectID");
+        }
         Ext.create('Rally.data.lookback.SnapshotStore', {
             filters: [
                 {property: '_TypeHierarchy', operator: 'in', value: ['HierarchicalRequirement']},
                 {property: '_ProjectHierarchy', value: me.getContext().getProject().ObjectID },
-                //{ property: "ObjectID", value: 17142502091 },
-                { property: "_PreviousValues.ScheduleState", operator: "exists", value: true }
+                { property: "_PreviousValues.ScheduleState", operator: "exists", value: true },
+                { property: "ScheduleState", operator: '=', value: "Accepted" },
+                { property: "Iteration", value: iOID }
             ],
-            fetch: ['_User','ScheduleState','_PreviousValues.ScheduleState','ObjectID','FormattedID','Name'],
-            hydrate: ['ScheduleState','_PreviousValues.ScheduleState']
+            fetch: ['_User','ScheduleState','_PreviousValues.ScheduleState','ObjectID','FormattedID','Name','Iteration'],
+            hydrate: ['ScheduleState','_PreviousValues.ScheduleState','Iteration']
         }).load({
             callback : function(records, operation, successful) {
                 if (successful){
-                    me.logger.log(records);
-                    
                     deferred.resolve(records);
                 } else {
-                    me.logger.log("Failed: ", operation);
                     deferred.reject('Problem loading: ' + operation.error.errors.join('. '));
                 }
             }
@@ -141,14 +139,17 @@ Ext.define("TSAuditReport", {
                 
                 return value.get('_refObjectName');
             } },
+            {dataIndex: '__UserObject', text: 'Role', renderer: function(value, meta_data, record) {
+                return value.get('Role');
+            } },
             { dataIndex: '_ValidFrom', text: 'When', renderer: function(value) {
                 if ( !value ) { return "--"; }
                 var display_value = Rally.util.DateTime.fromIsoString(value);
                 return Ext.util.Format.date(display_value, 'Y-m-d');
             } }
         ];
-        
-        this.down('#display_box').add({
+    if (this._grid) this._grid.destroy();
+    this._grid = this.add({
             xtype: 'rallygrid',
             store: store,
             columnCfgs: columns
