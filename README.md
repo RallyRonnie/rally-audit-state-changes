@@ -4,6 +4,8 @@
 
 * limited to current project and children
 * Will not find things that are modified in some other project and then moved in (except for mods after the move)
+* Is Iteration Scoped
+* Only reports Accepted work and displays current user's role
 
 ### First Load
 
